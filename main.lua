@@ -3,7 +3,30 @@ local HttpService = game:GetService("HttpService")
 
 -- // Variables
 
--- // functions
+-- // Functions
+local function SanitizeIdentifier(Id)
+	return Id:gsub("[^%w_]", "_")
+end
+
+local function ExtendedGCD(a, b)
+	if b == 0 then return 1, 0, a end
+	local x2, x1, y2, y1 = 1, 0, 0, 1
+	while b ~= 0 do
+		local q = math.floor(a/b)
+		a, b = b, a % b
+		x2, x1 = x1, x2 - q*x1
+		y2, y1 = y1, y2 - q*y1
+	end
+	return x2, y2, a
+end
+
+local function ModInverse(a, m)
+	local x, _, g = ExtendedGCD(a, m)
+	if g == 1 then
+		return (x % m + m) % m
+	end
+	return nil
+end
 
 --[[
 Initialize: the function that obfuscates the code
@@ -15,71 +38,54 @@ OutputStringVariable: StringValue?: an optional argument to either store the out
 
 function Initialize(Source: string, Watermark: string, Identifier: string)
 	warn("[OBFUSCATOR] The obfuscation has been started.")
-	
-	local Elapsed: number = os.clock()
-	
-	local function SanitizeIdentifier(Id)
-		return Id:gsub("[^%w_]", "_")
-	end
 
-	local IdentifierString = SanitizeIdentifier(Identifier or HttpService:GenerateGUID()) .. "_"
+	local ElapsedTime = os.clock()
 
-	local WatermarkedSource = "local Wm=\"" .. Watermark .. "\";" .. (Source or [[print("Hello World!")]])
-	local StartTime = tick()
 
-	local function RandomString(Length)
-		local Letters = {"A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"}
-		local Code = Letters[math.random(1,26)]
-		for I = 1, tonumber(Length) do
-			if math.random(1,2) == 1 then
-				local GetLetter = Letters[math.random(1,26)]
-				Code = Code .. GetLetter
-			else
-				Code = Code .. tostring(math.random(0,9))
-			end
-		end
-		return Code
-	end
+	-- small prime list coprime with 256 (all are odd)
+	local PrimeList = {3,5,7,11,13,17,19,23,29,31,37,41,43,47}
+	math.randomseed(os.time())
+	local ChosenPrime = PrimeList[math.random(#PrimeList)]
 
-	local function StringToBinary(InputString: string)
-		local BinaryArray = {}
-		for I = 1, #InputString do
-			local Char = InputString:sub(I, I)
-			local Byte = string.byte(Char)
-			local Binary = ""
-			while Byte > 0 do
-				Binary = tostring(Byte % 2) .. Binary
-				Byte = math.floor(Byte / 2)
-			end
-			table.insert(BinaryArray, string.format("%08d", tonumber(Binary) or 0))
-		end
-		return table.concat(BinaryArray, " ")
-	end
+	local PrimeInverse = ModInverse(ChosenPrime, 256)
+
+	local IdentifierString = SanitizeIdentifier(Identifier or HttpService:GenerateGUID()).."_"
+	local WatermarkedSource = "local Important_Warning_To_The_Decipherer=\""..(Watermark or "NoWatermark").."\";"..
+		(Source or [[print("Hello World!")]])
 
 	local JunkCode = "local X=(function()return true end)();"
 
+	-- encrypt each byte to ensure it stays within valid ascii range (0-255)
 	local SourceByteArray = ""
-	for I = 1, #WatermarkedSource do
-		SourceByteArray = SourceByteArray .. '"\\' .. string.byte(WatermarkedSource, I) .. '",'
+	for i = 1, #WatermarkedSource do
+		local byteValue = string.byte(WatermarkedSource, i)
+		local encoded = (byteValue * ChosenPrime) % 256
+		SourceByteArray = SourceByteArray .. encoded .. ","
 	end
-	local TableByteCode = "local " .. IdentifierString .. "Table={" .. SourceByteArray .. "}"
 
-	local DecodeAndRun = "local " .. IdentifierString .. "Concat=loadstring('return table.concat')();" ..
-		"local " .. IdentifierString .. "Code=" .. IdentifierString .. "Concat(" .. IdentifierString .. "Table);" ..
-		"loadstring(" .. IdentifierString .. "Code)();"
+	local TableByteCode = "local "..IdentifierString.."Table={"..SourceByteArray.."} "
+		.. "local "..IdentifierString.."PrimeInv="..PrimeInverse.." "
+		.. "local "..IdentifierString.."Prime="..ChosenPrime.." "
 
-	local ObfuscatedString = JunkCode .. TableByteCode .. DecodeAndRun
-	ObfuscatedString = ObfuscatedString:gsub("[\n\r]+", " "):gsub("%s%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+	local DecodeAndRun = "local "..IdentifierString.."Data={} "
+		.. "for _,v in ipairs("..IdentifierString.."Table) do "
+		.. " local dec=(v*"..IdentifierString.."PrimeInv)%256 "
+		.. " table.insert("..IdentifierString.."Data,string.char(dec)) "
+		.. "end "
+		.. "local "..IdentifierString.."Concat=loadstring('return table.concat')(); "
+		.. "local "..IdentifierString.."Code="..IdentifierString.."Concat("..IdentifierString.."Data); "
+		.. "loadstring("..IdentifierString.."Code)();"
 
-	local StringValue: StringValue = Instance.new("StringValue")
-	StringValue.Name = "Result_" .. IdentifierString
-	StringValue.Value = ObfuscatedString
-	StringValue.Parent = workspace
+	local ObfuscatedString = (JunkCode .. TableByteCode .. DecodeAndRun)
+		:gsub("[\n\r]+"," ")
+		:gsub("%s%s+"," ")
+		:gsub("^%s+","")
+		:gsub("%s+$","")
 
-	warn("[OBFUSCATOR] The obfuscation has been completed in " .. tostring(os.clock() - Elapsed) .. "s.")
+	warn("[OBFUSCATOR] The obfuscation has been completed in " .. tostring(os.clock() - ElapsedTime) .. "s.")
+
+	return ObfuscatedString
 end
 
 -- // Initialize
-return function(Source: string, Watermark: string, Identifier: string)
-	task.spawn(Initialize, Source, Watermark, Identifier)
-end
+return Initialize
